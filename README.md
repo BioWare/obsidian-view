@@ -11,15 +11,20 @@ A Neovim plugin for visualizing Obsidian vault notes in a floating window.
 
 Using packer.nvim:
 ```lua
-use {
-    'your-username/obsidian-view.nvim',
+use({
+    'BioWare/obsidian-view',
     requires = {
         'epwalsh/obsidian.nvim',
         'nvim-lua/plenary.nvim',
     },
     config = function()
         require('obsidian-view').setup({
-            -- your configuration here
+            -- By default it will show all notes
+            -- Optional: exclude specific folders
+            exclude_folders = {"templates", "Daily"},  -- This will exclude your templates and daily notes
+            -- Optional: include only specific folders
+            include_folders = {},  -- Empty means include all except excluded
+            preview_lines = 3,
         })
-    end
-}
+    end,
+})
