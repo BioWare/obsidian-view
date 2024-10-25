@@ -142,16 +142,14 @@ function M.show_notes()
     
     local buf = api.nvim_create_buf(false, true)
     
-    -- Расчет максимального количества заметок в ряду на основе ширины экрана
+    -- Расчет размеров
     local min_box_width = 40  -- Минимальная ширина для заметки
     local box_spacing = 2     -- Пространство между заметками
     local max_width = math.floor(vim.o.columns * M.config.width)
     local max_boxes_per_row = math.floor((max_width + box_spacing) / (min_box_width + box_spacing))
     max_boxes_per_row = math.max(1, math.min(max_boxes_per_row, 3))  -- Ограничиваем от 1 до 3
     
-    -- Пересчитываем ширину боксов чтобы точно заполнить доступное пространство
     local box_width = math.floor((max_width - (box_spacing * (max_boxes_per_row - 1))) / max_boxes_per_row)
-    
     local max_height = math.floor(vim.o.lines * M.config.height)
     
     local win = api.nvim_open_win(buf, true, {
@@ -164,23 +162,23 @@ function M.show_notes()
         border = 'rounded'
     })
     
-    -- Создаем карту позиций заметок для навигации
-    local note_map = {}  -- Будет хранить {row = {col = note_index}}
+    -- Храним информацию о позициях заметок
+    local note_positions = {}  -- Будет хранить [line_number] = note_index
     local lines = {}
     local current_row = {}
     local box_count = 0
-    local current_line_count = 0
+    local box_height = 6  -- Примерная высота бокса (настройте в соответствии с вашими боксами)
     
     for i, note in ipairs(notes) do
         local box = create_note_box(note, box_width)
         table.insert(current_row, box)
         box_count = box_count + 1
         
-        -- Запоминаем позицию заметки
-        local row_num = math.floor((i - 1) / max_boxes_per_row)
-        local col_num = (i - 1) % max_boxes_per_row
-        if not note_map[row_num] then note_map[row_num] = {} end
-        note_map[row_num][col_num] = i
+        -- Запоминаем позицию начала текущей заметки
+        local current_line = #lines + 1
+        for j = 0, box_height - 1 do
+            note_positions[current_line + j] = i
+        end
         
         if box_count == max_boxes_per_row then
             -- Combine boxes in current row
@@ -190,7 +188,6 @@ function M.show_notes()
                 for _, b in ipairs(current_row) do
                     line = line .. b[j] .. string.rep(" ", box_spacing)
                 end
-                -- Убираем лишние пробелы в конце строки
                 line = line:gsub("%s+$", "")
                 table.insert(row_lines, line)
             end
@@ -211,7 +208,6 @@ function M.show_notes()
             for _, b in ipairs(current_row) do
                 line = line .. b[i] .. string.rep(" ", box_spacing)
             end
-            -- Убираем лишние пробелы в конце строки
             line = line:gsub("%s+$", "")
             table.insert(row_lines, line)
         end
@@ -227,32 +223,29 @@ function M.show_notes()
     -- Отключаем горизонтальный скролл
     vim.api.nvim_win_set_option(win, 'wrap', true)
     
-    -- Сохраняем данные для навигации в буфере
-    api.nvim_buf_set_var(buf, 'note_map', note_map)
-    api.nvim_buf_set_var(buf, 'notes', notes)
-    
     local opts = { noremap = true, silent = true }
     api.nvim_buf_set_keymap(buf, 'n', 'q', ':close<CR>', opts)
     api.nvim_buf_set_keymap(buf, 'n', '<Esc>', ':close<CR>', opts)
     
-    -- Обновленный обработчик для открытия заметок
+    -- Обработчик для открытия заметок
+    local paths = {}
+    for i, note in ipairs(notes) do
+        paths[i] = note.path
+    end
+    
+    api.nvim_buf_set_var(buf, 'note_paths', paths)
+    
     api.nvim_buf_set_keymap(buf, 'n', '<CR>', '', {
         noremap = true,
         callback = function()
             local cursor = api.nvim_win_get_cursor(win)
-            local row = cursor[1] - 1  -- vim использует 1-based индексы
-            local col = cursor[2]
+            local line_num = cursor[1]
+            local note_index = note_positions[line_num]
+            local paths = api.nvim_buf_get_var(buf, 'note_paths')
             
-            -- Находим заметку под курсором
-            local row_num = math.floor(row / (box_height + 1))  -- +1 для пустой строки между рядами
-            local col_num = math.floor(col / (box_width + box_spacing))
-            
-            if note_map[row_num] and note_map[row_num][col_num] then
-                local note = notes[note_map[row_num][col_num]]
-                if note then
-                    api.nvim_command('close')
-                    vim.cmd('edit ' .. note.path)
-                end
+            if note_index and paths[note_index] then
+                api.nvim_command('close')
+                vim.cmd('edit ' .. paths[note_index])
             end
         end
     })
