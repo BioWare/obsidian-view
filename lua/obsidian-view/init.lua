@@ -44,24 +44,10 @@ local function get_notes()
     local scan = require("plenary.scandir")
     
     -- Get the current workspace path
-    -- Debug print entire client object
-    print("Client object:", vim.inspect(client))
-    
     local vault_path
-    -- Check if client.dir is a string or a table
-    if type(client.dir) == "string" then
-        vault_path = client.dir
-    else
-        -- If it's using workspaces, get the current workspace path
-        local workspaces = client.workspaces
-        if workspaces and #workspaces > 0 then
-            -- Use the first workspace by default
-            vault_path = workspaces[1].path
-            print("Using workspace path:", vault_path)
-        else
-            print("No valid workspace path found")
-            return {}
-        end
+    if client.current_workspace and client.current_workspace.path then
+        -- Convert Path object to string using its __tostring metamethod
+        vault_path = tostring(client.current_workspace.path)
     end
     
     if not vault_path then
@@ -74,49 +60,59 @@ local function get_notes()
     
     -- Debug prints
     print("Scanning vault path:", vault_path)
-    print("Path exists:", vim.fn.isdirectory(vault_path) == 1)
-    print("Path permissions:", vim.fn.system("ls -ld " .. vault_path))
     
-    -- Print all files in root directory
-    local handle = vim.loop.fs_scandir(vault_path)
-    if handle then
-        while true do
-            local name, type = vim.loop.fs_scandir_next(handle)
-            if not name then break end
-            print("Found in root:", name, type)
-        end
-    end
-    
-    -- Try direct globbing for md files
-    local md_files = vim.fn.glob(vault_path .. "/*.md")
-    print("Direct glob found md files:", md_files)
-    
-    -- Try plenary scan
+    -- Try plenary scan with recursive search
     local files = scan.scan_dir(vault_path, {
         hidden = false,
         add_dirs = false,
         respect_gitignore = true,
-        depth = 1,
+        depth = 10,  -- Увеличиваем глубину поиска
         search_pattern = "%.md$"
     })
     
-    print("Plenary scan found files:", vim.inspect(files))
+    print("Found files:", vim.inspect(files))
     
     for _, file in ipairs(files) do
         print("Processing file:", file)
         if should_include(file) then
             local title = vim.fn.fnamemodify(file, ':t:r')
             print("Including file:", title)
+            
+            -- Read file contents for preview
+            local lines = {}
+            local file_handle = io.open(file, "r")
+            
+            if file_handle then
+                -- Read first few lines for preview
+                for i = 1, M.config.preview_lines do
+                    local line = file_handle:read("*line")
+                    if line then
+                        -- Skip YAML frontmatter
+                        if i == 1 and line:match("^%-%-%-%s*$") then
+                            repeat
+                                line = file_handle:read("*line")
+                            until not line or line:match("^%-%-%-%)s*$")
+                            line = file_handle:read("*line")
+                        end
+                        if line then
+                            table.insert(lines, line)
+                        end
+                    end
+                end
+                file_handle:close()
+            end
+            
             table.insert(notes, {
                 title = title,
                 path = file,
-                preview = "Test preview"
+                preview = table.concat(lines, "\n")
             })
         else
             print("File excluded:", file)
         end
     end
     
+    print("Total notes found:", #notes)
     return notes
 end
 
