@@ -15,6 +15,33 @@ M.config = {
     workspace = nil
 }
 
+local function should_include(path, client_dir, config)
+    -- Convert path to relative path from vault root
+    local rel_path = path:sub(#client_dir + 2)
+    local folder = vim.fn.fnamemodify(rel_path, ':h')
+    
+    -- Check exclusions
+    for _, excluded in ipairs(config.exclude_folders) do
+        if folder:match('^' .. excluded) then
+            print("Excluded folder:", folder, "by pattern:", excluded)
+            return false
+        end
+    end
+    
+    -- Check inclusions
+    if #config.include_folders > 0 then
+        for _, included in ipairs(config.include_folders) do
+            if folder:match('^' .. included) then
+                print("Included folder:", folder, "by pattern:", included)
+                return true
+            end
+        end
+        return false
+    end
+    
+    return true
+end
+
 -- Function to get obsidian configuration
 local function get_obsidian_config()
     local obsidian = require("obsidian")
@@ -44,19 +71,7 @@ local function get_notes()
     local scan = require("plenary.scandir")
     
     -- Get the current workspace path
-    local vault_path
-    if client.current_workspace and client.current_workspace.path then
-        -- Convert Path object to string using its __tostring metamethod
-        vault_path = tostring(client.current_workspace.path)
-    end
-    
-    if not vault_path then
-        print("No valid vault path found")
-        return {}
-    end
-    
-    -- Expand the path (resolve ~/ if present)
-    vault_path = vim.fn.expand(vault_path)
+    local vault_path = tostring(client.current_workspace.path)
     
     -- Debug prints
     print("Scanning vault path:", vault_path)
@@ -66,7 +81,7 @@ local function get_notes()
         hidden = false,
         add_dirs = false,
         respect_gitignore = true,
-        depth = 10,  -- Увеличиваем глубину поиска
+        depth = 10,
         search_pattern = "%.md$"
     })
     
@@ -74,7 +89,8 @@ local function get_notes()
     
     for _, file in ipairs(files) do
         print("Processing file:", file)
-        if should_include(file) then
+        -- Передаем все необходимые параметры в функцию should_include
+        if should_include(file, vault_path, M.config) then
             local title = vim.fn.fnamemodify(file, ':t:r')
             print("Including file:", title)
             
