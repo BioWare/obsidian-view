@@ -1,3 +1,4 @@
+-- plugin/obsidian_view.lua
 local api = vim.api
 local fn = vim.fn
 
@@ -17,14 +18,12 @@ local function should_include(path, client_dir, config)
     local rel_path = path:sub(#client_dir + 2)
     local folder = vim.fn.fnamemodify(rel_path, ':h')
     
-    -- Check exclusions
     for _, excluded in ipairs(config.exclude_folders) do
         if folder:match('^' .. excluded) then
             return false
         end
     end
     
-    -- Check inclusions
     if #config.include_folders > 0 then
         for _, included in ipairs(config.include_folders) do
             if folder:match('^' .. included) then
@@ -162,23 +161,25 @@ function M.show_notes()
         border = 'rounded'
     })
     
-    -- Храним информацию о позициях заметок
-    local note_positions = {}  -- Будет хранить [line_number] = note_index
+    -- Храним информацию о позициях заголовков
+    local title_positions = {}  -- [row_number] = { col = column, note_index = index }
     local lines = {}
     local current_row = {}
     local box_count = 0
-    local box_height = 6  -- Примерная высота бокса (настройте в соответствии с вашими боксами)
+    local title_line_offset = 1  -- Строка с заголовком относительно начала бокса
     
     for i, note in ipairs(notes) do
         local box = create_note_box(note, box_width)
         table.insert(current_row, box)
         box_count = box_count + 1
         
-        -- Запоминаем позицию начала текущей заметки
-        local current_line = #lines + 1
-        for j = 0, box_height - 1 do
-            note_positions[current_line + j] = i
-        end
+        -- Запоминаем позицию заголовка текущей заметки
+        local current_line = #lines + title_line_offset
+        local col_offset = (box_count - 1) * (box_width + box_spacing)
+        title_positions[current_line] = {
+            col = col_offset + 2,  -- +2 для отступа от края бокса
+            note_index = i
+        }
         
         if box_count == max_boxes_per_row then
             -- Combine boxes in current row
@@ -223,32 +224,90 @@ function M.show_notes()
     -- Отключаем горизонтальный скролл
     vim.api.nvim_win_set_option(win, 'wrap', true)
     
-    local opts = { noremap = true, silent = true }
-    api.nvim_buf_set_keymap(buf, 'n', 'q', ':close<CR>', opts)
-    api.nvim_buf_set_keymap(buf, 'n', '<Esc>', ':close<CR>', opts)
-    
-    -- Обработчик для открытия заметок
+    -- Сохраняем пути к заметкам
     local paths = {}
     for i, note in ipairs(notes) do
         paths[i] = note.path
     end
     
     api.nvim_buf_set_var(buf, 'note_paths', paths)
+    api.nvim_buf_set_var(buf, 'title_positions', title_positions)
     
+    -- Функция для поиска следующей/предыдущей позиции заголовка
+    local function find_next_title(current_line, direction)
+        local lines_sorted = vim.tbl_keys(title_positions)
+        table.sort(lines_sorted)
+        
+        for i, line in ipairs(lines_sorted) do
+            if direction > 0 and line > current_line then
+                return line
+            elseif direction < 0 and line < current_line then
+                return lines_sorted[i]
+            end
+        end
+        
+        -- Циклический переход
+        if direction > 0 then
+            return lines_sorted[1]
+        else
+            return lines_sorted[#lines_sorted]
+        end
+    end
+    
+    -- Навигация по заголовкам
+    local function navigate_titles(direction)
+        local cursor = api.nvim_win_get_cursor(win)
+        local current_line = cursor[1]
+        local next_line = find_next_title(current_line, direction)
+        
+        if next_line then
+            local col = title_positions[next_line].col
+            api.nvim_win_set_cursor(win, {next_line, col})
+        end
+    end
+    
+    -- Маппинги для навигации
+    local opts = { noremap = true, silent = true }
+    api.nvim_buf_set_keymap(buf, 'n', 'q', ':close<CR>', opts)
+    api.nvim_buf_set_keymap(buf, 'n', '<Esc>', ':close<CR>', opts)
+    
+    api.nvim_buf_set_keymap(buf, 'n', 'j', '', {
+        noremap = true,
+        callback = function() navigate_titles(1) end
+    })
+    api.nvim_buf_set_keymap(buf, 'n', 'k', '', {
+        noremap = true,
+        callback = function() navigate_titles(-1) end
+    })
+    api.nvim_buf_set_keymap(buf, 'n', 'l', '', {
+        noremap = true,
+        callback = function() navigate_titles(1) end
+    })
+    api.nvim_buf_set_keymap(buf, 'n', 'h', '', {
+        noremap = true,
+        callback = function() navigate_titles(-1) end
+    })
+    
+    -- Обработчик для открытия заметок
     api.nvim_buf_set_keymap(buf, 'n', '<CR>', '', {
         noremap = true,
         callback = function()
             local cursor = api.nvim_win_get_cursor(win)
             local line_num = cursor[1]
-            local note_index = note_positions[line_num]
-            local paths = api.nvim_buf_get_var(buf, 'note_paths')
+            local title_pos = title_positions[line_num]
             
-            if note_index and paths[note_index] then
+            if title_pos and paths[title_pos.note_index] then
                 api.nvim_command('close')
-                vim.cmd('edit ' .. paths[note_index])
+                vim.cmd('edit ' .. paths[title_pos.note_index])
             end
         end
     })
+    
+    -- Устанавливаем курсор на первый заголовок
+    local first_title_line = vim.tbl_keys(title_positions)[1]
+    if first_title_line then
+        api.nvim_win_set_cursor(win, {first_title_line, title_positions[first_title_line].col})
+    end
 end
 
 function M.setup(opts)
