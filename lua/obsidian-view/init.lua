@@ -1,4 +1,3 @@
--- plugin/obsidian_view.lua
 local api = vim.api
 local fn = vim.fn
 
@@ -11,19 +10,16 @@ M.config = {
     exclude_folders = {},
     include_folders = {},
     preview_lines = 3,
-    -- Default to first workspace if none specified
     workspace = nil
 }
 
 local function should_include(path, client_dir, config)
-    -- Convert path to relative path from vault root
     local rel_path = path:sub(#client_dir + 2)
     local folder = vim.fn.fnamemodify(rel_path, ':h')
     
     -- Check exclusions
     for _, excluded in ipairs(config.exclude_folders) do
         if folder:match('^' .. excluded) then
-            print("Excluded folder:", folder, "by pattern:", excluded)
             return false
         end
     end
@@ -32,7 +28,6 @@ local function should_include(path, client_dir, config)
     if #config.include_folders > 0 then
         for _, included in ipairs(config.include_folders) do
             if folder:match('^' .. included) then
-                print("Included folder:", folder, "by pattern:", included)
                 return true
             end
         end
@@ -42,7 +37,6 @@ local function should_include(path, client_dir, config)
     return true
 end
 
--- Function to get obsidian configuration
 local function get_obsidian_config()
     local obsidian = require("obsidian")
     if not obsidian then
@@ -59,24 +53,14 @@ local function get_obsidian_config()
     return client
 end
 
--- Function to get all notes from the vault
 local function get_notes()
     local client = get_obsidian_config()
-    if not client then 
-        print("Failed to get obsidian client")
-        return {} 
-    end
+    if not client then return {} end
     
     local notes = {}
     local scan = require("plenary.scandir")
-    
-    -- Get the current workspace path
     local vault_path = tostring(client.current_workspace.path)
     
-    -- Debug prints
-    print("Scanning vault path:", vault_path)
-    
-    -- Try plenary scan with recursive search
     local files = scan.scan_dir(vault_path, {
         hidden = false,
         add_dirs = false,
@@ -85,25 +69,16 @@ local function get_notes()
         search_pattern = "%.md$"
     })
     
-    print("Found files:", vim.inspect(files))
-    
     for _, file in ipairs(files) do
-        print("Processing file:", file)
-        -- Передаем все необходимые параметры в функцию should_include
         if should_include(file, vault_path, M.config) then
             local title = vim.fn.fnamemodify(file, ':t:r')
-            print("Including file:", title)
-            
-            -- Read file contents for preview
             local lines = {}
             local file_handle = io.open(file, "r")
             
             if file_handle then
-                -- Read first few lines for preview
                 for i = 1, M.config.preview_lines do
                     local line = file_handle:read("*line")
                     if line then
-                        -- Skip YAML frontmatter
                         if i == 1 and line:match("^%-%-%-%s*$") then
                             repeat
                                 line = file_handle:read("*line")
@@ -123,35 +98,36 @@ local function get_notes()
                 path = file,
                 preview = table.concat(lines, "\n")
             })
-        else
-            print("File excluded:", file)
         end
     end
     
-    print("Total notes found:", #notes)
     return notes
 end
 
--- Create ASCII box for a note
-local function create_note_box(note)
-    local box_width = 30
-    local top = "┌" .. string.rep("─", box_width - 2) .. "┐"
-    local bottom = "└" .. string.rep("─", box_width - 2) .. "┘"
-    local empty = "│" .. string.rep(" ", box_width - 2) .. "│"
+local function create_note_box(note, width)
+    local top = "╭" .. string.rep("─", width - 2) .. "╮"
+    local bottom = "╰" .. string.rep("─", width - 2) .. "╯"
+    local empty = "│" .. string.rep(" ", width - 2) .. "│"
     
-    -- Format title
-    local title = note.title:sub(1, box_width - 4)
-    local title_line = "│ " .. title .. string.rep(" ", box_width - 4 - #title) .. " │"
+    local title = note.title:sub(1, width - 4)
+    local title_line = "│ " .. title .. string.rep(" ", width - 4 - #title) .. " │"
     
-    -- Format preview (first few lines of content)
     local preview_lines = {}
     for line in note.preview:gmatch("[^\n]+") do
-        local formatted = line:sub(1, box_width - 4)
-        table.insert(preview_lines, "│ " .. formatted .. string.rep(" ", box_width - 4 - #formatted) .. " │")
+        local formatted = line:sub(1, width - 4)
+        if #line > width - 4 then
+            formatted = formatted:sub(1, width - 7) .. "..."
+        end
+        table.insert(preview_lines, "│ " .. formatted .. string.rep(" ", width - 4 - #formatted) .. " │")
     end
     
-    local box = {top, title_line, empty}
+    local box = {top, title_line, "│" .. string.rep("─", width - 2) .. "│"}
     vim.list_extend(box, preview_lines)
+    if #preview_lines < 3 then
+        for i = 1, 3 - #preview_lines do
+            table.insert(box, empty)
+        end
+    end
     table.insert(box, bottom)
     
     return box
@@ -164,84 +140,77 @@ function M.show_notes()
         return
     end
     
-    -- Create buffer and window
     local buf = api.nvim_create_buf(false, true)
-    local width = math.floor(vim.o.columns * M.config.width)
-    local height = math.floor(vim.o.lines * M.config.height)
+    local max_width = math.floor(vim.o.columns * M.config.width)
+    local max_height = math.floor(vim.o.lines * M.config.height)
+    local box_spacing = 2
+    local max_boxes_per_row = 3
+    local box_width = math.floor((max_width - (box_spacing * (max_boxes_per_row - 1))) / max_boxes_per_row)
     
     local win = api.nvim_open_win(buf, true, {
         relative = 'editor',
-        width = width,
-        height = height,
-        col = math.floor((vim.o.columns - width) / 2),
-        row = math.floor((vim.o.lines - height) / 2),
+        width = max_width,
+        height = max_height,
+        col = math.floor((vim.o.columns - max_width) / 2),
+        row = math.floor((vim.o.lines - max_height) / 2),
         style = 'minimal',
-        border = M.config.border
+        border = 'rounded'
     })
     
-    -- Generate layout
+    vim.api.nvim_win_set_option(win, 'winblend', 0)
+    
     local lines = {}
     local current_row = {}
-    local max_boxes_per_row = 3
     local box_count = 0
-    local note_positions = {}  -- Store note positions for navigation
+    local note_positions = {}
     
     for i, note in ipairs(notes) do
-        local box = create_note_box(note)
+        local box = create_note_box(note, box_width)
         table.insert(current_row, box)
         box_count = box_count + 1
         
-        -- Store note position for navigation
         note_positions[#lines + 1] = note.path
         
         if box_count == max_boxes_per_row then
-            -- Combine boxes in current row
             local row_lines = {}
             for j = 1, #box do
                 local line = ""
                 for _, b in ipairs(current_row) do
-                    line = line .. b[j] .. "  "
+                    line = line .. b[j] .. string.rep(" ", box_spacing)
                 end
                 table.insert(row_lines, line)
             end
             
-            -- Add row lines to output
             vim.list_extend(lines, row_lines)
-            table.insert(lines, "")  -- Empty line between rows
+            table.insert(lines, "")
             
             current_row = {}
             box_count = 0
         end
     end
     
-    -- Handle remaining boxes
     if #current_row > 0 then
         local row_lines = {}
         for i = 1, #current_row[1] do
             local line = ""
             for _, b in ipairs(current_row) do
-                line = line .. b[i] .. "  "
+                line = line .. b[i] .. string.rep(" ", box_spacing)
             end
             table.insert(row_lines, line)
         end
         vim.list_extend(lines, row_lines)
     end
     
-    -- Set buffer content
     api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     api.nvim_buf_set_option(buf, 'modifiable', false)
-    
-    -- Set buffer options
     api.nvim_buf_set_option(buf, 'buftype', 'nofile')
     api.nvim_buf_set_option(buf, 'swapfile', false)
     api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
     
-    -- Set keymaps
     local opts = { noremap = true, silent = true }
     api.nvim_buf_set_keymap(buf, 'n', 'q', ':close<CR>', opts)
     api.nvim_buf_set_keymap(buf, 'n', '<Esc>', ':close<CR>', opts)
     
-    -- Open note under cursor
     api.nvim_buf_set_keymap(buf, 'n', '<CR>', '', {
         noremap = true,
         callback = function()
@@ -249,20 +218,17 @@ function M.show_notes()
             local line_num = cursor[1]
             local note_path = note_positions[line_num]
             if note_path then
-                api.nvim_command('close')  -- Close the float window
+                api.nvim_command('close')
                 vim.cmd('edit ' .. note_path)
             end
         end
     })
     
-    -- Store note positions in buffer variable for navigation
     api.nvim_buf_set_var(buf, 'note_positions', note_positions)
 end
 
 function M.setup(opts)
     M.config = vim.tbl_deep_extend("force", M.config, opts or {})
-    
-    -- Create user commands
     vim.api.nvim_create_user_command('ObsidianView', function()
         M.show_notes()
     end, {})
