@@ -44,11 +44,33 @@ local function get_notes()
     local scan = require("plenary.scandir")
     
     -- Get the current workspace path
-    local vault_path = client.dir
+    -- Debug print entire client object
+    print("Client object:", vim.inspect(client))
+    
+    local vault_path
+    -- Check if client.dir is a string or a table
+    if type(client.dir) == "string" then
+        vault_path = client.dir
+    else
+        -- If it's using workspaces, get the current workspace path
+        local workspaces = client.workspaces
+        if workspaces and #workspaces > 0 then
+            -- Use the first workspace by default
+            vault_path = workspaces[1].path
+            print("Using workspace path:", vault_path)
+        else
+            print("No valid workspace path found")
+            return {}
+        end
+    end
+    
     if not vault_path then
         print("No valid vault path found")
         return {}
     end
+    
+    -- Expand the path (resolve ~/ if present)
+    vault_path = vim.fn.expand(vault_path)
     
     -- Debug prints
     print("Scanning vault path:", vault_path)
@@ -85,7 +107,6 @@ local function get_notes()
         if should_include(file) then
             local title = vim.fn.fnamemodify(file, ':t:r')
             print("Including file:", title)
-            -- Add minimal note info for testing
             table.insert(notes, {
                 title = title,
                 path = file,
