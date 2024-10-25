@@ -35,7 +35,10 @@ end
 -- Function to get all notes from the vault
 local function get_notes()
     local client = get_obsidian_config()
-    if not client then return {} end
+    if not client then 
+        print("Failed to get obsidian client")
+        return {} 
+    end
     
     local notes = {}
     local scan = require("plenary.scandir")
@@ -43,89 +46,53 @@ local function get_notes()
     -- Get the current workspace path
     local vault_path = client.dir
     if not vault_path then
-        vim.notify("No valid vault path found", vim.log.levels.ERROR)
+        print("No valid vault path found")
         return {}
     end
     
-    -- Debug print
+    -- Debug prints
     print("Scanning vault path:", vault_path)
+    print("Path exists:", vim.fn.isdirectory(vault_path) == 1)
+    print("Path permissions:", vim.fn.system("ls -ld " .. vault_path))
     
-    -- Handle notes subdirectory if configured
-    local notes_subdir = client.notes_subdir
-    if notes_subdir then
-        vault_path = fn.expand(fn.joinpath(vault_path, notes_subdir))
+    -- Print all files in root directory
+    local handle = vim.loop.fs_scandir(vault_path)
+    if handle then
+        while true do
+            local name, type = vim.loop.fs_scandir_next(handle)
+            if not name then break end
+            print("Found in root:", name, type)
+        end
     end
     
-    -- Helper function to check if path should be included
-    local function should_include(path)
-        -- Convert path to relative path from vault root
-        local rel_path = path:sub(#client.dir + 2)
-        local folder = vim.fn.fnamemodify(rel_path, ':h')
-        
-        -- Check exclusions
-        for _, excluded in ipairs(M.config.exclude_folders) do
-            if folder:match('^' .. excluded) then
-                return false
-            end
-        end
-        
-        -- Check inclusions
-        if #M.config.include_folders > 0 then
-            for _, included in ipairs(M.config.include_folders) do
-                if folder:match('^' .. included) then
-                    return true
-                end
-            end
-            return false
-        end
-        
-        return true
-    end
+    -- Try direct globbing for md files
+    local md_files = vim.fn.glob(vault_path .. "/*.md")
+    print("Direct glob found md files:", md_files)
     
-    -- Scan vault directory
+    -- Try plenary scan
     local files = scan.scan_dir(vault_path, {
         hidden = false,
         add_dirs = false,
         respect_gitignore = true,
-        depth = 10,
+        depth = 1,
         search_pattern = "%.md$"
     })
     
-    -- Debug print
-    print("Found files:", #files)
+    print("Plenary scan found files:", vim.inspect(files))
     
     for _, file in ipairs(files) do
+        print("Processing file:", file)
         if should_include(file) then
-            -- Read file contents for preview
-            local lines = {}
             local title = vim.fn.fnamemodify(file, ':t:r')
-            local file_handle = io.open(file, "r")
-            
-            if file_handle then
-                -- Read first few lines for preview
-                for i = 1, M.config.preview_lines do
-                    local line = file_handle:read("*line")
-                    if line then
-                        -- Skip YAML frontmatter
-                        if i == 1 and line:match("^%-%-%-%s*$") then
-                            repeat
-                                line = file_handle:read("*line")
-                            until not line or line:match("^%-%-%-%)s*$")
-                            line = file_handle:read("*line")
-                        end
-                        if line then
-                            table.insert(lines, line)
-                        end
-                    end
-                end
-                file_handle:close()
-            end
-            
+            print("Including file:", title)
+            -- Add minimal note info for testing
             table.insert(notes, {
                 title = title,
                 path = file,
-                preview = table.concat(lines, "\n")
+                preview = "Test preview"
             })
+        else
+            print("File excluded:", file)
         end
     end
     
